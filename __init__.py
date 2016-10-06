@@ -10,7 +10,7 @@
 
 # Imports
 import sys
-
+#import ui
 # Are we being run from Pythonista?
 if not sys.platform == 'ios':
     print('Paper only runs on Pythonista.')
@@ -20,8 +20,7 @@ else:
     import json
     import traceback
     import threading
-
-    # import ui
+    import ui
 
     from types import ModuleType
     from bottle import run, route, get, post, static_file, request
@@ -71,17 +70,25 @@ class JSUtils(object):
         return a * b
 
 
-# Type utils
+# Type utilsChange the class to:
+
 class JSFunction(object):
     def __init__(self, app, code):
         self.app = app
         self.code = code
 
     def __call__(self, *args):
-        args = ','.join(args[0])
+        if len(args) == 0:
+            args = ''
+        else:
+            args = ','.join(args)
+        
         call = '({})({})'.format(self.code, args)
-
-        return app._js.eval_js(call)
+        print('call evaljs')
+        print(call)
+        returnval= self.app._js.eval_js(call)
+        print('done evaljs',returnval)
+        return returnval
 
 
 # Library code
@@ -119,6 +126,7 @@ class PaperApp(object):
     def __init__(self, root, all_builtins=False):
         self._root = root
         self._all_builtins = all_builtins
+        self.initserver()
 
     def _extend_types(self, data):
         '''
@@ -210,16 +218,19 @@ class PaperApp(object):
         # Serve static files (actually, just the API and jQuery)
         @get('/js/<filename:re:.*\.(js)>')
         def includes(filename):
+            print(filename)
             return static_file(filename, root='./include')
 
         # Serve the app
         @get('/')
         def index():
-            return static_file('index.html', root='./app')
+            print('serving')
+            return static_file('index.html', root=self._root)
 
         # Handle API calls
         @post('/api')
         def api():
+            print(request.json)
             is_builtin = ('builtin' in request.json)
             is_call = ('call' in request.json)
 
@@ -443,25 +454,59 @@ class PaperApp(object):
                 }
 
                 return json.dumps(data)
-
-        # Start the server
-        try:
+                
+    def initserver(self):
+         try:
             # Start server
             server = threading.Thread(target=run, kwargs={'host': '127.0.0.1',
                                                           'port': 1406,
-                                                          'quiet': True})
+                                                          'quiet': False})
             server.start()
-
+            print('started')
             # Start WebView
-            def webview()
-                self._js = ui.WebView()
-                self._js.load_url('127.0.0.1:1406')
-                self._js.present('panel')
+            def webview():
 
-            ui.in_background(webview())
+                debug=False
+                debugjs='''
+                // debug_utils.js
+                // 1) custom console object
+                console = new Object();
+                console.log = function(log) {
+                // create then remove an iframe, to communicate with 
+                //webview delegate
+                var iframe = document.createElement("IFRAME");
+                iframe.setAttribute("src", "ios-log:" + log);
+                document.documentElement.appendChild(iframe);
+                iframe.parentNode.removeChild(iframe);
+                iframe = null;    };
+                // TODO: give each log level an identifier in the log
+                console.debug = console.log;
+                console.info = console.log;
+                console.warn = console.log;
+                console.error = console.log;
+                window.onerror = (function(error, url, line,col,errorobj) {
+                	console.log("error: "+error+"%0Aurl:"+url+" line:"+line+"col:"+col+"stack:"+errorobj);})
+                console.log("logging activated");
+                '''            
+                import requests
+                unquote=requests.utils.unquote
+                class debugDelegate (object):
+                    def webview_should_start_load(self,
+                        webview, url, nav_type):
+                        if url.startswith('ios-log'):
+                            print (unquote(url))
+                        return True
+    	
+                self._js = ui.WebView()
+                self._js.delegate=debugDelegate()
+                self._js.eval_js(debugjs)
+                print('presenting')
+                self._js.present('sheet')
+                self._js.load_url('http://127.0.0.1:1406')
+            ui.delay(webview,1.9)
 
             # run(host='127.0.0.1', port=1406, quiet=True)
-        except KeyboardInterrupt:
+         except KeyboardInterrupt:
             sys.exit()
 
 
